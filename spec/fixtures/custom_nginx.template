@@ -193,6 +193,37 @@ http {
             return 200;
         }
 
+        location / {
+            content_by_lua_block {
+                local cjson = require "cjson"
+
+                ngx.req.read_body()
+
+                local var = ngx.var
+                local req = ngx.req
+                local json = cjson.encode {
+                    server = {
+                        scheme         = var.scheme,
+                        https          = var.https,
+                        host           = var.host,
+                        remote_addr    = var.remote_addr,
+                        uri            = var.uri,
+                        request        = var.request,
+                        request_uri    = var.request_uri,
+                        request_method = var.request_method,
+                    },
+                    method    = req.get_method(),
+                    uri_args  = req.get_uri_args(0),
+                    post_args = req.get_post_args(0),
+                    headers   = req.get_headers(0),
+                }
+
+                ngx.status = 200
+                ngx.say(json)
+                ngx.exit(200)
+            }
+        }
+
         location /headers-inspect {
             content_by_lua_block {
                 local cjson = require "cjson"

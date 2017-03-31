@@ -387,4 +387,206 @@ describe("Router", function()
       assert.equal("fixture-api", res.headers["kong-api-name"])
     end)
   end)
+
+
+  describe("trailing slash", function()
+
+    setup(function()
+      insert_apis {
+        {
+          name         = "strip-uri-1",
+          upstream_url = "http://localhost:9999/",
+          hosts        = {
+            "localbin-1.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-2",
+          upstream_url = "http://localhost:9999/get/foo",
+          hosts        = {
+            "localbin-2.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-3",
+          upstream_url = "http://localhost:9999/get/foo/",
+          hosts        = {
+            "localbin-3.com",
+          },
+          uris        = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-4",
+          strip_uri    = true,
+          upstream_url = "http://localhost:9999/",
+          hosts        = {
+            "localbin-4.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-5",
+          strip_uri    = true,
+          upstream_url = "http://localhost:9999/get/foo",
+          hosts        = {
+            "localbin-5.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-6",
+          strip_uri    = true,
+          upstream_url = "http://localhost:9999/get/foo/",
+          hosts        = {
+            "localbin-6.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-7",
+          strip_uri    = false,
+          upstream_url = "http://localhost:9999/",
+          hosts        = {
+            "localbin-7.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-8",
+          strip_uri    = false,
+          upstream_url = "http://localhost:9999/get/foo",
+          hosts        = {
+            "localbin-8.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+        {
+          name         = "strip-uri-9",
+          strip_uri    = false,
+          upstream_url = "http://localhost:9999/get/foo/",
+          hosts        = {
+            "localbin-9.com",
+          },
+          uris         = {
+            "/",
+            "/get/foo",
+          }
+        },
+      }
+
+      assert(helpers.start_kong {
+        nginx_conf = "spec/fixtures/custom_nginx.template",
+      })
+    end)
+
+    teardown(function()
+      helpers.stop_kong()
+    end)
+
+    local function check(upstream_uri, request_uri, expected_uri, strip_uri)
+      return function()
+        local i = 1
+
+        if strip_uri == true then
+          i = i + 3
+        elseif strip_uri == false then
+          i = i + 6
+        end
+
+        if upstream_uri ~= "/" then
+          i = i + 1
+          if string.sub(upstream_uri, -1) == "/" then
+            i = i + 1
+          end
+        end
+
+        local res = assert(client:send {
+          method  = "GET",
+          path    = request_uri,
+          headers = {
+            ["Host"] = "localbin-" .. i .. ".com",
+          }
+        })
+
+        local json = assert.res_status(200, res)
+        local data = cjson.decode(json)
+
+        assert.equal(expected_uri, data.server.request_uri)
+      end
+    end
+
+    local checks = {
+      { "/",         "/",         "/",                 nil   },
+      { "/",         "/get/foo",  "/",                 nil   },
+      { "/",         "/get/foo/", "/",                 nil   },
+      { "/get/foo",  "/",         "/get/foo",          nil   },
+      { "/get/foo/", "/",         "/get/foo/",         nil   },
+      { "/get/foo",  "/get/foo",  "/get/foo",          nil   },
+      { "/get/foo/", "/get/foo",  "/get/foo",          nil   },
+      { "/get/foo",  "/get/foo/", "/get/foo/",         nil   },
+      { "/get/foo/", "/get/foo/", "/get/foo/",         nil   },
+      { "/",         "/",         "/",                 true  },
+      { "/",         "/get/foo",  "/",                 true  },
+      { "/",         "/get/foo/", "/",                 true  },
+      { "/get/foo",  "/",         "/get/foo",          true  },
+      { "/get/foo/", "/",         "/get/foo/",         true  },
+      { "/get/foo",  "/get/foo",  "/get/foo",          true  },
+      { "/get/foo/", "/get/foo",  "/get/foo",          true  },
+      { "/get/foo",  "/get/foo/", "/get/foo/",         true  },
+      { "/get/foo/", "/get/foo/", "/get/foo/",         true  },
+      { "/",         "/",         "/",                 false },
+      { "/",         "/get/foo",  "/get/foo",          false },
+      { "/",         "/get/foo/", "/get/foo/",         false },
+      { "/get/foo",  "/",         "/get/foo",          false },
+      { "/get/foo/", "/",         "/get/foo/",         false },
+      { "/get/foo",  "/get/foo",  "/get/foo/get/foo",  false },
+      { "/get/foo/", "/get/foo",  "/get/foo/get/foo",  false },
+      { "/get/foo",  "/get/foo/", "/get/foo/get/foo/", false },
+      { "/get/foo/", "/get/foo/", "/get/foo/get/foo/", false },
+    }
+
+    local unpack = table.unpack or unpack
+
+    for _, args in ipairs(checks) do
+
+      local config = "(strip_uri = n/a)"
+
+      if args[4] == true then
+        config = "(strip_uri = on) "
+      elseif args[4] == false then
+        config = "(strip_uri = off)"
+      end
+
+      local space = string.sub(args[1], -1) == "/" and "" or " "
+
+      it(config .. " is not appended to upstream uri " .. args[1] .. space .. " when requesting " .. args[2],
+        check(unpack(args)))
+    end
+  end)
 end)
